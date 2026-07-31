@@ -1,0 +1,392 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id         String      @id @default(uuid())
+  name       String
+  slug       String      @unique
+  timezone   String      @default("UTC")
+  createdAt  DateTime    @default(now()) @map("created_at")
+  updatedAt  DateTime    @updatedAt @map("updated_at")
+  programs   Program[]
+  volunteers Volunteer[]
+
+  @@map("organization")
+}
+
+/// Authoritative volunteer identity — immutable UUID per BR-01.
+/// Email uses lowercase normalization at the application layer (citext semantics).
+model Volunteer {
+  id               String          @id @default(uuid())
+  orgId            String          @map("org_id")
+  /// Always stored lowercase; UNIQUE enforced via partial index in custom-constraints.sql
+  email            String          @unique
+  passwordHash     String          @map("password_hash")
+  fullName         String          @map("full_name")
+  /// Used for age-based eligibility rules (BR-03)
+  dateOfBirth      DateTime?       @map("date_of_birth") @db.Date
+  status           VolunteerStatus @default(ACTIVE)
+  role             UserRole        @default(VOLUNTEER)
+  /// TOTP secret stored encrypted; null until MFA setup
+  mfaSecret        String?         @map("mfa_secret")
+  mfaEnabled       Boolean         @default(false) @map("mfa_enabled")
+  /// Argon2id hash of the current refresh token; null = no active session
+  refreshTokenHash String?         @map("refresh_token_hash")
+  failedLoginAttempts Int          @default(0) @map("failed_login_attempts")
+  lockedUntil      DateTime?       @map("locked_until")
+  /// Scope binding for Site Supervisors (scoped to site_id)
+  scopeSiteId      String?         @map("scope_site_id")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  /// Soft delete — never hard delete during active retention workflow
+  deletedAt        DateTime?       @map("deleted_at")
+  assignments      Assignment[]
+  actorAuditLogs   AuditLog[]      @relation("ActorAuditLogs")
+  consentRecords   ConsentRecord[]
+  contactDetail    ContactDetail?
+  credentials      Credential[]
+  registrations    Registration[]
+  organization     Organization    @relation(fields: [orgId], references: [id])
+
+  @@map("volunteer")
+}
+
+/// Contact details compartmentalized from program participation per PDF data-design.
+model ContactDetail {
+  id                   String    @id @default(uuid())
+  volunteerId          String    @unique @map("volunteer_id")
+  phone                String?
+  address              String?
+  /// JSON: { name, phone, relationship } — stored as JSON for flexibility
+  emergencyContactJson Json?     @map("emergency_contact_json")
+  preferredLanguage    String    @default("en") @map("preferred_language")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+  volunteer            Volunteer @relation(fields: [volunteerId], references: [id])
+
+  @@map("contact_detail")
+}
+
+/// Append-only consent ledger — withdrawal is a new row, not an update (audit integrity).
+model ConsentRecord {
+  id              String    @id @default(uuid())
+  volunteerId     String    @map("volunteer_id")
+  /// e.g. 'COMMUNICATIONS_EMAIL', 'DATA_PROCESSING', 'WAIVER_V2'
+  consentType     String    @map("consent_type")
+  /// Policy version that was accepted
+  version         String
+  /// Immutable snapshot of the wording at time of consent
+  wordingSnapshot String    @map("wording_snapshot")
+  /// e.g. 'WEB_FORM', 'EMAIL_LINK', 'IN_PERSON'
+  channel         String
+  grantedAt       DateTime  @default(now()) @map("granted_at")
+  /// Non-null = withdrawn; populate via new row, never update grantedAt row
+  withdrawnAt     DateTime? @map("withdrawn_at")
+  volunteer       Volunteer @relation(fields: [volunteerId], references: [id])
+
+  @@map("consent_record")
+}
+
+/// Stores credential status/date/reference only — never full background-check reports (PDF §10).
+model Credential {
+  id                String           @id @default(uuid())
+  volunteerId       String           @map("volunteer_id")
+  type              CredentialType
+  status            CredentialStatus @default(NOT_STARTED)
+  issuedAt          DateTime?        @map("issued_at")
+  expiresAt         DateTime?        @map("expires_at")
+  /// External provider reference only; full report stays with provider
+  providerReference String?          @map("provider_reference")
+  notes             String?
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+  volunteer         Volunteer        @relation(fields: [volunteerId], references: [id])
+
+  @@map("credential")
+}
+
+model Program {
+  id             String       @id @default(uuid())
+  organizationId String       @map("organization_id")
+  name           String
+  description    String?
+  isActive       Boolean      @default(true) @map("is_active")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  events         Event[]
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@map("program")
+}
+
+model Event {
+  id                   String          @id @default(uuid())
+  programId            String          @map("program_id")
+  name                 String
+  description          String?
+  startsAt             DateTime        @map("starts_at")
+  endsAt               DateTime        @map("ends_at")
+  /// IANA timezone identifier, e.g. "America/New_York"
+  timezone             String          @default("UTC")
+  status               EventStatus     @default(DRAFT)
+  createdByVolunteerId String?         @map("created_by_volunteer_id")
+  createdAt            DateTime        @default(now()) @map("created_at")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
+  program              Program         @relation(fields: [programId], references: [id])
+  opportunities        Opportunity[]
+  participations       Participation[]
+
+  @@map("event")
+}
+
+model Opportunity {
+  id           String            @id @default(uuid())
+  eventId      String            @map("event_id")
+  name         String
+  description  String?
+  location     String?
+  siteId       String?           @map("site_id")
+  status       OpportunityStatus @default(DRAFT)
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+  applications Application[]
+  event        Event             @relation(fields: [eventId], references: [id])
+  roles        Role[]
+
+  @@map("opportunity")
+}
+
+model Role {
+  id                   String      @id @default(uuid())
+  opportunityId        String      @map("opportunity_id")
+  name                 String
+  description          String?
+  /// Versioned JSON rule set: { minAge?, maxAge?, requiredCredentialTypes?, requiredCredentialIds? }
+  /// Versioned at creation time so past assignments preserve rules active at that time (PDF §7 data-design).
+  eligibilityRulesJson Json?       @map("eligibility_rules_json")
+  createdAt            DateTime    @default(now()) @map("created_at")
+  updatedAt            DateTime    @updatedAt @map("updated_at")
+  opportunity          Opportunity @relation(fields: [opportunityId], references: [id])
+  shifts               Shift[]
+
+  @@map("role")
+}
+
+model Shift {
+  id                   String         @id @default(uuid())
+  roleId               String         @map("role_id")
+  siteId               String?        @map("site_id")
+  capacityMin          Int            @default(0) @map("capacity_min")
+  capacityMax          Int            @map("capacity_max")
+  startsAt             DateTime       @map("starts_at")
+  endsAt               DateTime       @map("ends_at")
+  timezone             String         @default("UTC")
+  /// Shift-level eligibility overrides (merged with role-level rules at service layer)
+  eligibilityRulesJson Json?          @map("eligibility_rules_json")
+  status               ShiftStatus    @default(DRAFT)
+  createdAt            DateTime       @default(now()) @map("created_at")
+  updatedAt            DateTime       @updatedAt @map("updated_at")
+  assignments          Assignment[]
+  registrations        Registration[]
+  role                 Role           @relation(fields: [roleId], references: [id])
+
+  @@map("shift")
+}
+
+model Application {
+  id                    String      @id @default(uuid())
+  volunteerId           String      @map("volunteer_id")
+  opportunityId         String      @map("opportunity_id")
+  formAnswersJson       Json?       @map("form_answers_json")
+  status                String      @default("PENDING")
+  notes                 String?
+  reviewedByVolunteerId String?     @map("reviewed_by_volunteer_id")
+  reviewedAt            DateTime?   @map("reviewed_at")
+  createdAt             DateTime    @default(now()) @map("created_at")
+  updatedAt             DateTime    @updatedAt @map("updated_at")
+  opportunity           Opportunity @relation(fields: [opportunityId], references: [id])
+
+  @@map("application")
+}
+
+/// Registration status pipeline per BR-02.
+/// UNIQUE(volunteer_id, shift_id) WHERE status != CANCELLED enforced
+/// via partial unique index in custom-constraints.sql.
+model Registration {
+  id               String             @id @default(uuid())
+  volunteerId      String             @map("volunteer_id")
+  shiftId          String             @map("shift_id")
+  status           RegistrationStatus @default(INTERESTED)
+  waitlistPosition Int?               @map("waitlist_position")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+  assignment       Assignment?
+  shift            Shift              @relation(fields: [shiftId], references: [id])
+  volunteer        Volunteer          @relation(fields: [volunteerId], references: [id])
+
+  @@unique([volunteerId, shiftId])
+  @@map("registration")
+}
+
+/// Assignment — confirmed registration. Stores denormalized shift times to enable
+/// the DB-level GIST exclusion constraint for overlap prevention (BR-11).
+/// See custom-constraints.sql for: EXCLUDE USING gist (volunteer_id WITH =, tstzrange(...) WITH &&)
+model Assignment {
+  id             String           @id @default(uuid())
+  registrationId String           @unique @map("registration_id")
+  shiftId        String           @map("shift_id")
+  volunteerId    String           @map("volunteer_id")
+  status         AssignmentStatus @default(ASSIGNED)
+  /// Denormalized from shift.starts_at at assignment time — required for GIST exclusion constraint
+  startsAt       DateTime         @map("starts_at")
+  /// Denormalized from shift.ends_at at assignment time — required for GIST exclusion constraint
+  endsAt         DateTime         @map("ends_at")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  registration   Registration     @relation(fields: [registrationId], references: [id])
+  shift          Shift            @relation(fields: [shiftId], references: [id])
+  volunteer      Volunteer        @relation(fields: [volunteerId], references: [id])
+  attendance     Attendance?
+
+  @@map("assignment")
+}
+
+model Attendance {
+  id             String     @id @default(uuid())
+  assignmentId   String     @unique @map("assignment_id")
+  method         String     @default("ROSTER")
+  checkedInAt    DateTime?  @map("checked_in_at")
+  checkedOutAt   DateTime?  @map("checked_out_at")
+  status         String     @default("CHECKED_IN")
+  idempotencyKey String?    @unique @map("idempotency_key")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  assignment     Assignment @relation(fields: [assignmentId], references: [id])
+
+  @@map("attendance")
+}
+
+model Participation {
+  id                String   @id @default(uuid())
+  volunteerId       String   @map("volunteer_id")
+  eventId           String   @map("event_id")
+  assignmentId      String?  @map("assignment_id")
+  scheduledHours    Decimal? @map("scheduled_hours") @db.Decimal(10, 2)
+  creditedHours     Decimal? @map("credited_hours") @db.Decimal(10, 2)
+  status            String   @default("DRAFT")
+  approvedById      String?  @map("approved_by_id")
+  certifiesEligible Boolean  @default(false) @map("certifies_eligible")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  event             Event    @relation(fields: [eventId], references: [id])
+
+  @@map("participation")
+}
+
+model AuditLog {
+  id                String     @id @default(uuid())
+  /// e.g. 'VOLUNTEER', 'REGISTRATION', 'ASSIGNMENT', 'CREDENTIAL'
+  entityType        String     @map("entity_type")
+  entityId          String     @map("entity_id")
+  /// Null for system-generated actions
+  actorId           String?    @map("actor_id")
+  /// e.g. 'CREATED', 'STATUS_CHANGED', 'APPROVED', 'OVERRIDDEN', 'CERT_ISSUED'
+  action            String
+  previousValueJson Json?      @map("previous_value_json")
+  newValueJson      Json?      @map("new_value_json")
+  /// Required for manual overrides (BR-12)
+  reason            String?
+  /// Links to request-level correlation ID for incident investigation
+  correlationId     String?    @map("correlation_id")
+  createdAt         DateTime   @default(now()) @map("created_at")
+  actor             Volunteer? @relation("ActorAuditLogs", fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@map("audit_log")
+}
+
+enum VolunteerStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum UserRole {
+  VOLUNTEER
+  GROUP_LEADER
+  GUARDIAN
+  COORDINATOR
+  EVENT_MANAGER
+  SITE_SUPERVISOR
+  COMMUNICATIONS_TEAM
+  LEADERSHIP
+  SYSTEM_ADMIN
+  AUDITOR
+}
+
+enum CredentialType {
+  TRAINING
+  BACKGROUND_CHECK
+  LICENSE
+  CERTIFICATION
+}
+
+enum CredentialStatus {
+  NOT_STARTED
+  PENDING
+  SUBMITTED
+  APPROVED
+  REJECTED
+  EXPIRED
+  WAIVED
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  CANCELLED
+  COMPLETED
+}
+
+enum OpportunityStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  CANCELLED
+}
+
+enum ShiftStatus {
+  DRAFT
+  PUBLISHED
+  FULL
+  CANCELLED
+  COMPLETED
+}
+
+enum RegistrationStatus {
+  INTERESTED
+  APPLIED
+  ELIGIBLE
+  REGISTERED
+  WAITLISTED
+  ASSIGNED
+  CONFIRMED
+  CHECKED_IN
+  COMPLETED
+  APPROVED
+  CANCELLED
+}
+
+enum AssignmentStatus {
+  ASSIGNED
+  CONFIRMED
+  CHECKED_IN
+  COMPLETED
+  CANCELLED
+}
