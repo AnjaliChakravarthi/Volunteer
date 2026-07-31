@@ -11,6 +11,8 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { IdentityModule } from './modules/identity/identity.module';
 import { VolunteerProfileModule } from './modules/volunteer-profile/volunteer-profile.module';
 import { EventSchedulingModule } from './modules/event-scheduling/event-scheduling.module';
+import { RecruitmentModule } from './modules/recruitment/recruitment.module';
+import { OnboardingModule } from './modules/onboarding/onboarding.module';
 
 @Module({
   imports: [
@@ -37,6 +39,8 @@ import { EventSchedulingModule } from './modules/event-scheduling/event-scheduli
     IdentityModule,
     VolunteerProfileModule,
     EventSchedulingModule,
+    RecruitmentModule,
+    OnboardingModule,
   ],
   providers: [
     {

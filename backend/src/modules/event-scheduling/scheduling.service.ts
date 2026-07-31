@@ -168,6 +168,22 @@ export class SchedulingService {
     return opp;
   }
 
+  async listOpportunities(params: { eventId?: string; status?: string }) {
+    const where: Prisma.OpportunityWhereInput = {};
+    if (params.eventId) where.eventId = params.eventId;
+    if (params.status) where.status = params.status as any;
+
+    const data = await this.prisma.opportunity.findMany({
+      where,
+      include: {
+        event: { select: { name: true, startsAt: true } },
+        roles: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return data;
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // BE-002c: ROLE CRUD
   // ─────────────────────────────────────────────────────────────────────────

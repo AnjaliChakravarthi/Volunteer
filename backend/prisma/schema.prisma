@@ -52,6 +52,9 @@ model Volunteer {
   contactDetail    ContactDetail?
   credentials      Credential[]
   registrations    Registration[]
+  applications     Application[]
+  participations   Participation[]
+  participationApprovals Participation[] @relation("ParticipationApprovals")
   organization     Organization    @relation(fields: [orgId], references: [id])
 
   @@map("volunteer")
@@ -210,6 +213,7 @@ model Application {
   createdAt             DateTime    @default(now()) @map("created_at")
   updatedAt             DateTime    @updatedAt @map("updated_at")
   opportunity           Opportunity @relation(fields: [opportunityId], references: [id])
+  volunteer             Volunteer   @relation(fields: [volunteerId], references: [id])
 
   @@map("application")
 }
@@ -252,6 +256,7 @@ model Assignment {
   shift          Shift            @relation(fields: [shiftId], references: [id])
   volunteer      Volunteer        @relation(fields: [volunteerId], references: [id])
   attendance     Attendance?
+  participations Participation[]
 
   @@map("assignment")
 }
@@ -271,18 +276,22 @@ model Attendance {
 }
 
 model Participation {
-  id                String   @id @default(uuid())
-  volunteerId       String   @map("volunteer_id")
-  eventId           String   @map("event_id")
-  assignmentId      String?  @map("assignment_id")
-  scheduledHours    Decimal? @map("scheduled_hours") @db.Decimal(10, 2)
-  creditedHours     Decimal? @map("credited_hours") @db.Decimal(10, 2)
-  status            String   @default("DRAFT")
-  approvedById      String?  @map("approved_by_id")
-  certifiesEligible Boolean  @default(false) @map("certifies_eligible")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
-  event             Event    @relation(fields: [eventId], references: [id])
+  id                String      @id @default(uuid())
+  volunteerId       String      @map("volunteer_id")
+  eventId           String      @map("event_id")
+  /// Null for approved remote hours per BR-04 (no check-in event)
+  assignmentId      String?     @map("assignment_id")
+  scheduledHours    Decimal?    @map("scheduled_hours") @db.Decimal(10, 2)
+  creditedHours     Decimal?    @map("credited_hours") @db.Decimal(10, 2)
+  status            String      @default("DRAFT")
+  approvedById      String?     @map("approved_by_id")
+  certifiesEligible Boolean     @default(false) @map("certifies_eligible")
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
+  event             Event       @relation(fields: [eventId], references: [id])
+  volunteer         Volunteer   @relation(fields: [volunteerId], references: [id])
+  assignment        Assignment? @relation(fields: [assignmentId], references: [id])
+  approvedBy        Volunteer?  @relation("ParticipationApprovals", fields: [approvedById], references: [id])
 
   @@map("participation")
 }

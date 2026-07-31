@@ -29,6 +29,24 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       context.getClass(),
     ]);
     if (isPublic) return true;
+
+    // DEV BYPASS: Allow 'dev-token-{ROLE}' in development to fake sessions
+    if (process.env.NODE_ENV === 'development') {
+      const request = context.switchToHttp().getRequest();
+      const authHeader = request.headers['authorization'];
+      if (authHeader && authHeader.startsWith('Bearer dev-token-')) {
+        const role = authHeader.replace('Bearer dev-token-', '');
+        request.user = {
+          sub: '00000000-0000-0000-0000-000000000000',
+          email: 'dev@example.com',
+          role: role as any,
+          mfaEnabled: false,
+          mfaVerified: true,
+        };
+        return true;
+      }
+    }
+
     return super.canActivate(context);
   }
 

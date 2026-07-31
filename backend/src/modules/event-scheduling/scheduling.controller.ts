@@ -15,6 +15,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.interface';
 import { UserRole } from '../../common/types/user-role.enum';
@@ -80,6 +81,16 @@ export class SchedulingController {
     @CurrentUser('sub') actorId: string,
   ) {
     const data = await this.schedulingService.createOpportunity(eventId, dto, actorId);
+    return { data };
+  }
+
+  @Public()
+  @Get('opportunities')
+  async listOpportunities(@Query() query: { eventId?: string; status?: string }) {
+    const data = await this.schedulingService.listOpportunities({
+      eventId: query.eventId,
+      status: query.status,
+    });
     return { data };
   }
 
