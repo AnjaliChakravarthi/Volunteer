@@ -9,12 +9,13 @@ import { Link } from 'react-router-dom';
 import { MapPin, Calendar as CalIcon, Users, Search, Loader2, AlertCircle, Sparkles } from 'lucide-react';
 import { api } from '../lib/api';
 
-interface OpportunityRole { name: string; capacity?: number; }
+interface OpportunityRole { id?: string; name: string; capacity?: number; }
 interface Opportunity {
   id: string;
   name: string;
   description?: string;
   location?: string;
+  siteId?: string;
   status: string;
   event?: { name: string; startsAt?: string; };
   roles?: OpportunityRole[];
@@ -133,44 +134,59 @@ export default function OpportunityPortal() {
             <div
               key={opp.id}
               className="opp-card animate-fade-up"
-              style={{ animationDelay: `${i * 60}ms` }}
+              style={{ animationDelay: `${i * 60}ms`, position: 'relative', display: 'flex', flexDirection: 'column' }}
             >
-              {/* Top */}
-              <div>
-                {opp.event?.name && (
-                  <span className="opp-card__event-tag">{opp.event.name}</span>
-                )}
-                <h3 className="opp-card__title mt-2">{opp.name}</h3>
-                {opp.description && (
-                  <p className="opp-card__desc mt-2">{opp.description}</p>
-                )}
-              </div>
+              {/* Entire card body is a clickable link to detail view */}
+              <Link
+                to={`/opportunities/${opp.id}`}
+                id={`opp-card-link-${opp.id}`}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  flex: 1,
+                  textDecoration: 'none',
+                  color: 'inherit',
+                }}
+                aria-label={`View details for ${opp.name}`}
+              >
+                {/* Top */}
+                <div style={{ flex: 1 }}>
+                  {opp.event?.name && (
+                    <span className="opp-card__event-tag">{opp.event.name}</span>
+                  )}
+                  <h3 className="opp-card__title mt-2">{opp.name}</h3>
+                  {opp.description && (
+                    <p className="opp-card__desc mt-2">{opp.description}</p>
+                  )}
+                </div>
 
-              {/* Meta */}
-              <div className="opp-card__meta">
-                {opp.location && (
-                  <div className="opp-card__meta-row">
-                    <MapPin size={14} style={{ color: 'var(--primary)', flexShrink: 0 }} />
-                    {opp.location}
-                  </div>
-                )}
-                {opp.event?.startsAt && (
-                  <div className="opp-card__meta-row">
-                    <CalIcon size={14} style={{ color: 'var(--primary)', flexShrink: 0 }} />
-                    {new Date(opp.event.startsAt).toLocaleDateString(undefined, {
-                      weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
-                    })}
-                  </div>
-                )}
-                {opp.roles && opp.roles.length > 0 && (
-                  <div className="opp-card__meta-row">
-                    <Users size={14} style={{ color: 'var(--primary)', flexShrink: 0 }} />
-                    {opp.roles.map(r => r.capacity !== undefined ? `${r.name} (${r.capacity})` : r.name).join(', ')}
-                  </div>
-                )}
-              </div>
+                {/* Meta */}
+                <div className="opp-card__meta">
+                  {(opp.location || opp.siteId) && (
+                    <div className="opp-card__meta-row">
+                      <MapPin size={14} style={{ color: 'var(--primary)', flexShrink: 0 }} />
+                      {opp.location ?? opp.siteId}
+                    </div>
+                  )}
+                  {opp.event?.startsAt && (
+                    <div className="opp-card__meta-row">
+                      <CalIcon size={14} style={{ color: 'var(--primary)', flexShrink: 0 }} />
+                      {new Date(opp.event.startsAt).toLocaleString(undefined, {
+                        weekday: 'short', year: 'numeric', month: 'short',
+                        day: 'numeric', hour: '2-digit', minute: '2-digit',
+                      })}
+                    </div>
+                  )}
+                  {opp.roles && opp.roles.length > 0 && (
+                    <div className="opp-card__meta-row">
+                      <Users size={14} style={{ color: 'var(--primary)', flexShrink: 0 }} />
+                      {opp.roles.map(r => r.name).join(', ')}
+                    </div>
+                  )}
+                </div>
+              </Link>
 
-              {/* Footer */}
+              {/* Footer — lives outside Link so buttons don't trigger navigation */}
               <div className="opp-card__footer">
                 <span className={`badge ${opp.status === 'OPEN' ? 'badge-success'
                     : opp.status === 'DRAFT' ? 'badge-warning'
@@ -188,9 +204,13 @@ export default function OpportunityPortal() {
                     Apply to Volunteer
                   </Link>
                 ) : (
-                  <button className="btn btn-ghost btn-sm" disabled>
-                    {opp.status === 'DRAFT' ? 'Not Yet Open' : 'Closed'}
-                  </button>
+                  <Link
+                    to={`/opportunities/${opp.id}`}
+                    id={`view-details-btn-${opp.id}`}
+                    className="btn btn-ghost btn-sm"
+                  >
+                    View Details
+                  </Link>
                 )}
               </div>
             </div>

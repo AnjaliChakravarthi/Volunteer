@@ -94,6 +94,7 @@ export class SchedulingController {
     return { data };
   }
 
+  @Public()
   @Get('opportunities/:id')
   async getOpportunity(@Param('id', ParseUUIDPipe) id: string) {
     const data = await this.schedulingService.getOpportunity(id);

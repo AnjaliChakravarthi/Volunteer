@@ -14,6 +14,7 @@ import { ToastProvider } from './context/ToastContext';
 import { RoleGuard } from './components/RoleGuard';
 
 import OpportunityPortal    from './pages/OpportunityPortal';
+import OpportunityDetail    from './pages/OpportunityDetail';
 import ApplicationForm      from './pages/ApplicationForm';
 import OnboardingChecklist  from './pages/OnboardingChecklist';
 import EventBuilder         from './pages/EventBuilder';
@@ -143,6 +144,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/" element={<OpportunityPortal />} />
+      <Route path="/opportunities/:id" element={<OpportunityDetail />} />
       <Route
         path="/apply/:opportunityId"
         element={

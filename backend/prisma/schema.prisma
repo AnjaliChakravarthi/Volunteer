@@ -54,7 +54,10 @@ model Volunteer {
   registrations    Registration[]
   applications     Application[]
   participations   Participation[]
-  participationApprovals Participation[] @relation("ParticipationApprovals")
+  participationApprovals Participation[]       @relation("ParticipationApprovals")
+  participationAdjustments ParticipationAdjustment[]
+  supervisedAttendances  Attendance[]         @relation("AttendanceSupervisedBy")
+  qrTokens         QrToken[]
   organization     Organization    @relation(fields: [orgId], references: [id])
 
   @@map("volunteer")
@@ -262,19 +265,37 @@ model Assignment {
 }
 
 model Attendance {
-  id             String     @id @default(uuid())
-  assignmentId   String     @unique @map("assignment_id")
-  method         String     @default("ROSTER")
-  checkedInAt    DateTime?  @map("checked_in_at")
-  checkedOutAt   DateTime?  @map("checked_out_at")
-  status         String     @default("CHECKED_IN")
-  idempotencyKey String?    @unique @map("idempotency_key")
-  createdAt      DateTime   @default(now()) @map("created_at")
-  assignment     Assignment @relation(fields: [assignmentId], references: [id])
+  id               String     @id @default(uuid())
+  assignmentId     String     @unique @map("assignment_id")
+  /// 'ROSTER' | 'QR' | 'MANUAL' | 'WALK_IN_MANUAL' | 'OFFLINE_QUEUED'
+  method           String     @default("ROSTER")
+  checkedInAt      DateTime?  @map("checked_in_at")
+  checkedOutAt     DateTime?  @map("checked_out_at")
+  /// 'CHECKED_IN' | 'CHECKED_OUT' | 'NO_SHOW' | 'OFFLINE_CONFLICT'
+  status           String     @default("CHECKED_IN")
+  /// Idempotency key prevents duplicate QR scan rows (critical acceptance case 4)
+  /// Format: sha256(assignment_id + truncated-minute-timestamp)
+  idempotencyKey   String?    @unique @map("idempotency_key")
+  /// Offline: null until synced; non-null = was queued offline
+  offlineQueuedAt  DateTime?  @map("offline_queued_at")
+  /// True when offline sync produced a conflict requiring supervisor review
+  offlineConflict  Boolean    @default(false) @map("offline_conflict")
+  offlineConflictNote String? @map("offline_conflict_note")
+  /// FK to the supervisor who performed the check-in (nullable for self-checkin)
+  supervisedById   String?    @map("supervised_by_id")
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
+  assignment       Assignment @relation(fields: [assignmentId], references: [id])
+  supervisedBy     Volunteer? @relation("AttendanceSupervisedBy", fields: [supervisedById], references: [id])
 
+  @@index([status])
+  @@index([checkedInAt])
   @@map("attendance")
 }
 
+/// Participation Ledger — one record per volunteer per event (or remote block).
+/// Status state machine: DRAFT → SUBMITTED → SUPERVISOR_APPROVED → FINALIZED → LOCKED
+/// DISPUTED is a pre-FINALIZED flag; once FINALIZED it requires an adjustment entry (BR-05).
 model Participation {
   id                String      @id @default(uuid())
   volunteerId       String      @map("volunteer_id")
@@ -282,9 +303,21 @@ model Participation {
   /// Null for approved remote hours per BR-04 (no check-in event)
   assignmentId      String?     @map("assignment_id")
   scheduledHours    Decimal?    @map("scheduled_hours") @db.Decimal(10, 2)
+  /// Actual check-in time (may differ from shift start)
+  checkinTime       DateTime?   @map("checkin_time")
+  /// Actual check-out time (may differ from shift end)
+  checkoutTime      DateTime?   @map("checkout_time")
+  /// Break duration in minutes subtracted from gross hours
+  breakMinutes      Int         @default(0) @map("break_minutes")
   creditedHours     Decimal?    @map("credited_hours") @db.Decimal(10, 2)
+  /// DRAFT | SUBMITTED | SUPERVISOR_APPROVED | FINALIZED | LOCKED | DISPUTED
   status            String      @default("DRAFT")
   approvedById      String?     @map("approved_by_id")
+  approvedAt        DateTime?   @map("approved_at")
+  /// True when |scheduledHours - creditedHours| > 15% (auto-flag threshold per §3.4)
+  hasDiscrepancy    Boolean     @default(false) @map("has_discrepancy")
+  /// Link to S3/object-store evidence (photo, sign-in sheet scan, etc.)
+  evidenceRef       String?     @map("evidence_ref")
   certifiesEligible Boolean     @default(false) @map("certifies_eligible")
   createdAt         DateTime    @default(now()) @map("created_at")
   updatedAt         DateTime    @updatedAt @map("updated_at")
@@ -292,8 +325,51 @@ model Participation {
   volunteer         Volunteer   @relation(fields: [volunteerId], references: [id])
   assignment        Assignment? @relation(fields: [assignmentId], references: [id])
   approvedBy        Volunteer?  @relation("ParticipationApprovals", fields: [approvedById], references: [id])
+  adjustments       ParticipationAdjustment[]
 
+  @@index([volunteerId, status])
+  @@index([eventId, status])
   @@map("participation")
+}
+
+/// Append-only adjustment ledger for post-FINALIZED corrections (BR-05).
+/// Never overwrites participation rows — each correction is a new row here
+/// with a before/after snapshot for full audit integrity.
+model ParticipationAdjustment {
+  id                   String        @id @default(uuid())
+  participationId      String        @map("participation_id")
+  /// Positive = adding hours; negative = reducing hours
+  deltaHours           Decimal       @map("delta_hours") @db.Decimal(10, 2)
+  reason               String
+  /// Full JSON snapshot of the participation row BEFORE this adjustment
+  previousSnapshotJson Json          @map("previous_snapshot_json")
+  /// Full JSON snapshot of the participation row AFTER this adjustment
+  newSnapshotJson      Json          @map("new_snapshot_json")
+  actorId              String        @map("actor_id")
+  createdAt            DateTime      @default(now()) @map("created_at")
+  participation        Participation @relation(fields: [participationId], references: [id])
+  actor                Volunteer     @relation(fields: [actorId], references: [id])
+
+  @@index([participationId])
+  @@index([actorId])
+  @@map("participation_adjustment")
+}
+
+/// Short-lived signed QR tokens for volunteer check-in.
+/// Issued per assignment; consumed on check-in; single-use enforced by usedAt.
+model QrToken {
+  id           String    @id @default(uuid())
+  assignmentId String    @map("assignment_id")
+  volunteerId  String    @map("volunteer_id")
+  token        String    @unique
+  expiresAt    DateTime  @map("expires_at")
+  usedAt       DateTime? @map("used_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  volunteer    Volunteer @relation(fields: [volunteerId], references: [id])
+
+  @@index([token])
+  @@index([expiresAt])
+  @@map("qr_token")
 }
 
 model AuditLog {

@@ -13,6 +13,8 @@ import { VolunteerProfileModule } from './modules/volunteer-profile/volunteer-pr
 import { EventSchedulingModule } from './modules/event-scheduling/event-scheduling.module';
 import { RecruitmentModule } from './modules/recruitment/recruitment.module';
 import { OnboardingModule } from './modules/onboarding/onboarding.module';
+import { AttendanceModule } from './modules/attendance/attendance.module';
+import { ParticipationLedgerModule } from './modules/participation-ledger/participation-ledger.module';
 
 @Module({
   imports: [
@@ -35,12 +37,14 @@ import { OnboardingModule } from './modules/onboarding/onboarding.module';
     // Global Database Access
     PrismaModule,
 
-    // Feature Modules (Phase 1)
+    // Feature Modules
     IdentityModule,
     VolunteerProfileModule,
     EventSchedulingModule,
     RecruitmentModule,
     OnboardingModule,
+    AttendanceModule,
+    ParticipationLedgerModule,
   ],
   providers: [
     {
